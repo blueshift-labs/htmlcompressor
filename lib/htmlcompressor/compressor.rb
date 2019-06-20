@@ -225,27 +225,6 @@ module HtmlCompressor
 
     def preserve_blocks(html, preBlocks, taBlocks, scriptBlocks, styleBlocks, eventBlocks, condCommentBlocks, skipBlocks, lineBreakBlocks, userBlocks)
 
-      # preserve user blocks
-      preservePatterns = @options[:preserve_patterns]
-      unless (preservePatterns.nil?)
-        preservePatterns.each_with_index do |preservePattern, i|
-          userBlock = []
-          index = -1
-
-          html = html.gsub(preservePattern) do |match|
-            if match.strip.length > 0
-              userBlock << match
-              index += 1
-              message_format(TEMP_USER_BLOCK, i, index)
-            else
-              ''
-            end
-          end
-
-          userBlocks << userBlock
-        end
-      end
-
       # preserve <!-- {{{ ---><!-- }}} ---> skip blocks
       skipBlockIndex = -1
 
@@ -368,6 +347,27 @@ module HtmlCompressor
         end
 
         $1 + message_format(TEMP_TEXT_AREA_BLOCK, index) + $3
+      end
+
+      # preserve user blocks
+      preservePatterns = @options[:preserve_patterns]
+      unless (preservePatterns.nil?)
+        preservePatterns.each_with_index do |preservePattern, i|
+          userBlock = []
+          index = -1
+
+          html = html.gsub(preservePattern) do |match|
+            if match.strip.length > 0
+              userBlock << match
+              index += 1
+              message_format(TEMP_USER_BLOCK, i, index)
+            else
+              ''
+            end
+          end
+
+          userBlocks << userBlock
+        end
       end
 
       # preserve line breaks
