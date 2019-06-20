@@ -407,6 +407,21 @@ module HtmlCompressor
         end
       end
 
+      # put user blocks back
+      unless @options[:preserve_patterns].nil?
+        @options[:preserve_patterns].each_with_index do |preservePattern, p|
+          tempUserPattern = Regexp.new("%%%~COMPRESS~USER#{p}~(\\d+?)~%%%")
+          html = html.gsub(tempUserPattern).each do |match|
+            i = $1.to_i
+            if userBlocks.size > p and userBlocks[p].size > i
+              userBlocks[p][i]
+            else
+              ''
+            end
+          end
+        end
+      end
+
       # put TEXTAREA blocks back
       html = html.gsub(TEMP_TEXT_AREA_PATTERN) do |match|
         i = $1.to_i
@@ -462,22 +477,6 @@ module HtmlCompressor
           condCommentBlocks[i] # quoteReplacement ?
         else
           ''
-        end
-      end
-
-
-      # put user blocks back
-      unless @options[:preserve_patterns].nil?
-        @options[:preserve_patterns].each_with_index do |preservePattern, p|
-          tempUserPattern = Regexp.new("%%%~COMPRESS~USER#{p}~(\\d+?)~%%%")
-          html = html.gsub(tempUserPattern).each do |match|
-            i = $1.to_i
-            if userBlocks.size > p and userBlocks[p].size > i
-              userBlocks[p][i]
-            else
-              ''
-            end
-          end
         end
       end
 
