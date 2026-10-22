@@ -38,6 +38,7 @@ module HtmlCompressor
     TEMP_SCRIPT_BLOCK = "%%%~COMPRESS~SCRIPT~{0,number,#}~%%%"
     TEMP_STYLE_BLOCK = "%%%~COMPRESS~STYLE~{0,number,#}~%%%"
     TEMP_EVENT_BLOCK = "%%%~COMPRESS~EVENT~{0,number,#}~%%%"
+    TEMP_COMMENT_BLOCK = "%%%~COMPRESS~COMMENT~{0,number,#}~%%%"
     TEMP_LINE_BREAK_BLOCK = "%%%~COMPRESS~LT~{0,number,#}~%%%"
     TEMP_SKIP_BLOCK = "%%%~COMPRESS~SKIP~{0,number,#}~%%%"
     TEMP_USER_BLOCK = "%%%~COMPRESS~USER{0,number,#}~{1,number,#}~%%%"
@@ -47,6 +48,8 @@ module HtmlCompressor
     SKIP_PATTERN = Regexp.new("<!--\\s*\\{\\{\\{\\s*-->(.*?)<!--\\s*\\}\\}\\}\\s*-->", Regexp::MULTILINE | Regexp::IGNORECASE)
     COND_COMMENT_PATTERN = Regexp.new("(<!(?:--)?\\[[^\\]]+?\\]>)(.*?)(<!\\[[^\\]]+\\]-->)", Regexp::MULTILINE | Regexp::IGNORECASE)
     COMMENT_PATTERN = Regexp.new("<!---->|<!--[^\\[].*?-->", Regexp::MULTILINE | Regexp::IGNORECASE)
+    COMMENT_CONDITIONAL_PATTERN = Regexp.new("<!--(?!\\[)(?:(?!-->).)*<!(?:--)?\\[if\\b(?:(?!-->).)*-->", Regexp::MULTILINE | Regexp::IGNORECASE)
+    COMMENT_BUILTIN_PATTERN = Regexp.new("<(?:pre|textarea|script|style)\\b|\\son[a-z]+\\s*=\\s*[\"']", Regexp::IGNORECASE)
     INTERTAG_PATTERN_TAG_TAG = Regexp.new(">\\s+<", Regexp::MULTILINE | Regexp::IGNORECASE)
     INTERTAG_PATTERN_TAG_CUSTOM = Regexp.new(">\\s+%%%~", Regexp::MULTILINE | Regexp::IGNORECASE)
     INTERTAG_PATTERN_CUSTOM_TAG = Regexp.new("~%%%\\s+<", Regexp::MULTILINE | Regexp::IGNORECASE)
@@ -89,6 +92,7 @@ module HtmlCompressor
     TEMP_SCRIPT_PATTERN = Regexp.new("%%%~COMPRESS~SCRIPT~(\\d+?)~%%%")
     TEMP_STYLE_PATTERN = Regexp.new("%%%~COMPRESS~STYLE~(\\d+?)~%%%")
     TEMP_EVENT_PATTERN = Regexp.new("%%%~COMPRESS~EVENT~(\\d+?)~%%%")
+    TEMP_COMMENT_PATTERN = Regexp.new("%%%~COMPRESS~COMMENT~(\\d+?)~%%%")
     TEMP_SKIP_PATTERN = Regexp.new("%%%~COMPRESS~SKIP~(\\d+?)~%%%")
     TEMP_LINE_BREAK_PATTERN = Regexp.new("%%%~COMPRESS~LT~(\\d+?)~%%%")
 
@@ -242,13 +246,40 @@ module HtmlCompressor
       condCommentCompressor = self.clone
       index = -1
 
-      html = html.gsub(COND_COMMENT_PATTERN) do |match|
-        if $2.strip.length > 0
+      # A conditional opener written inside an ordinary comment must not be
+      # paired with a real conditional closer later in the document.
+      conditionalDocumentationBlocks = []
+      html = html.gsub(COMMENT_CONDITIONAL_PATTERN) do |match|
+        conditionalDocumentationBlocks << match
+        message_format(TEMP_COMMENT_BLOCK, conditionalDocumentationBlocks.size - 1)
+      end
+
+      html = html.gsub(COND_COMMENT_PATTERN) do
+        block_match = Regexp.last_match
+        if block_match[2].strip.length > 0
           index += 1
-          condCommentBlocks << ($1 + condCommentCompressor.compress($2) + $3)
+          condCommentBlocks << (block_match[1] + condCommentCompressor.compress(block_match[2]) + block_match[3])
           message_format(TEMP_COND_COMMENT_BLOCK, index)
         else
           ''
+        end
+      end
+      unless conditionalDocumentationBlocks.empty?
+        html = restore_comment_blocks(html, conditionalDocumentationBlocks)
+      end
+
+      # Hide only comments containing markup recognized by the remaining
+      # built-in preservation passes. Other comments follow the original path.
+      commentBlocks = []
+      index = -1
+
+      html = html.gsub(COMMENT_PATTERN) do |match|
+        if match =~ COMMENT_BUILTIN_PATTERN
+          commentBlocks << match
+          index += 1
+          message_format(TEMP_COMMENT_BLOCK, index)
+        else
+          match
         end
       end
 
@@ -349,6 +380,18 @@ module HtmlCompressor
         $1 + message_format(TEMP_TEXT_AREA_BLOCK, index) + $3
       end
 
+      # Restore comments before user-defined preservation patterns so their
+      # existing matching semantics remain unchanged. The normal HTML phase
+      # will still remove or retain these comments according to the option.
+      unless commentBlocks.empty?
+        html = restore_comment_blocks(html, commentBlocks)
+        [preBlocks, taBlocks, scriptBlocks, styleBlocks, eventBlocks, skipBlocks].each do |blocks|
+          blocks.map! do |block|
+            restore_comment_blocks(block, commentBlocks)
+          end
+        end
+      end
+
       # preserve user blocks
       preservePatterns = @options[:preserve_patterns]
       unless (preservePatterns.nil?)
@@ -381,6 +424,13 @@ module HtmlCompressor
       end
 
       html
+    end
+
+    def restore_comment_blocks(source, commentBlocks)
+      source.gsub(TEMP_COMMENT_PATTERN) do
+        index = Regexp.last_match[1].to_i
+        commentBlocks.size > index ? commentBlocks[index] : ''
+      end
     end
 
     def return_blocks(html, preBlocks, taBlocks, scriptBlocks, styleBlocks, eventBlocks, condCommentBlocks, skipBlocks, lineBreakBlocks, userBlocks)
